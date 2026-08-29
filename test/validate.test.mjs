@@ -150,6 +150,24 @@ test("the WASM boot chain has a failure path that kills the page", () => {
   assert.match(app, /<tr><td>secp256k1 WebAssembly module<\/td><td>Failed<\/td><\/tr>/);
 });
 
+test("every gate and publication path consumes the single tested candidate (issue #93)", () => {
+  const workflow = read(".github/workflows/ci-cd.yml");
+  // One build records the candidate's SHA-256 and shares the exact object.
+  assert.match(workflow, /^\s{2}build:\n(?:.|\n)*?^\s{4}outputs:\n\s*sha256: \$\{\{ steps\.digest\.outputs\.sha256 \}\}/m);
+  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/);
+  // Each job that reads the compiled artifact downloads that object and
+  // verifies its digest instead of rebuilding it.
+  for (const job of ["test-ci", "test-browser", "test-browser-check", "test-invariants", "verify", "artifact"]) {
+    const section = workflow.match(new RegExp(`^  ${job}:\\n(?:.|\\n)*?(?=^  [a-z-]+:|\\Z)`, "m"))?.[0] ?? "";
+    assert.ok(section, `${job} job is missing`);
+    assert.match(section, /actions\/download-artifact@[0-9a-f]{40}/, `${job} must download the tested candidate`);
+    assert.match(section, /sha256sum -c -/, `${job} must verify the candidate digest`);
+    assert.doesNotMatch(section, /^\s+run: npm run build\s*$/m, `${job} must not rebuild the wallet HTML`);
+  }
+  // The repository artifact cannot be committed when unit or browser tests fail.
+  assert.match(workflow, /^\s{2}artifact:\n(?:.|\n)*?^\s{4}needs: \[build, verify, test-ci, test-browser, build-wasm\]$/m);
+});
+
 test("third-party actions are immutable and deployment is test-gated", () => {
   const workflow = read(".github/workflows/ci-cd.yml");
   assert.doesNotMatch(workflow, /^\s*uses:\s*[^\s]+@(?![0-9a-f]{40}(?:\s|$))/m);
